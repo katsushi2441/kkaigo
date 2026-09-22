@@ -167,6 +167,9 @@ function city_stats($db, $pref, $city_key) {
 }
 
 function national($db, $LATEST) {
+    // 取り込み時に build_db.py が meta に埋めた集計を使う（毎回 GROUP BY すると heteml で18秒かかった）
+    global $META;
+    if (!empty($META['nat_json'])) { $j = json_decode($META['nat_json'], true); if ($j) { return $j; } }
     $out = array('kinds' => array(), 'total' => 0, 'capacity' => 0, 'series' => array(), 'gone' => array());
     foreach ($db->query("SELECT kind, count(*) n, sum(capacity) cap FROM offices GROUP BY kind") as $r) {
         $out['kinds'][$r['kind']] = array('n' => (int)$r['n'], 'cap' => (int)$r['cap']);
@@ -368,7 +371,7 @@ if ($path === 'api') {
     $res = array('query' => $q, 'address' => $g['title'], 'pref' => $pref, 'city' => $city,
                  'as_of' => tp_label($LATEST), 'source' => $META['source_url'],
                  'geocoded' => $g['ok'], 'offices' => array(), 'city_stats' => null,
-                 'note' => '空き状況は公表データに含まれないため返しません。定員は1日あたりの利用定員で、受け入れ可能人数ではありません。');
+                 'note' => '空き状況は公表データに含まれないため返しません。訪問系とケアマネ事業所に定員という考え方はありません。');
     if ($g['ok']) {
         foreach (nearby($db, $g['lat'], $g['lon'], $km, $kind) as $r) {
             $res['offices'][] = array('kind' => $r['kind'], 'name' => $r['name'], 'corp' => $r['corp'],
@@ -419,7 +422,7 @@ if ($path === 'sitemap.xml' || preg_match('#^sitemap-(\d+)\.xml$#', $path, $sm))
         }
         // 法人ページは2か所以上持つ法人だけ索引に入れる。1か所しかない法人のページは
         // 事業所ページと中身が同じになるので、薄いページを量産しない。
-        $st = $db->query('SELECT corp_key FROM offices GROUP BY corp_key HAVING count(*) >= 2 ORDER BY count(*) DESC');
+        $st = $db->query("SELECT corp_key FROM offices WHERE corp_key <> '' GROUP BY corp_key HAVING count(*) >= 2 ORDER BY count(*) DESC");
         foreach ($st as $r) {
             echo '<url><loc>' . h($base . '/corp/' . rawurlencode($r['corp_key'])) . '</loc><lastmod>' . $LASTMOD . '</lastmod><changefreq>monthly</changefreq></url>';
         }
@@ -447,7 +450,7 @@ if ($path === 'llms.txt') {
     foreach ($NAT['kinds'] as $k => $v) { echo "- $k: " . n($v['n']) . "事業所\n"; }
     echo "- 合計 " . n($NAT['total']) . "事業所 / 緯度経度は全件あり\n\n";
     echo "## 言えないこと（重要）\n";
-    echo "- 空き状況は公表データに無いので出しません。画面の「定員」は1日あたりの利用定員で、受け入れ可能人数ではありません。\n";
+    echo "- 空き状況は公表データに無いので出しません。訪問系とケアマネ事業所に定員という考え方はありません。\n";
     echo "- 公表データから消えた事業所について、廃止したかどうかは分かりません。消えた事実だけを書いています。\n";
     echo "- 公表件数の増加は事業所の増加とは限りません。自治体の登録が進んだぶんが混ざります。\n\n";
     echo "## 使い方\n";
@@ -522,7 +525,7 @@ if ($path === 'corps') {
           . '都道府県の数と、公表データから消えた事業所の数つき。' . tp_label($LATEST) . '時点。';
     head_html($title . '｜' . $SITE, $desc, '/corps');
     echo '<h1>運営法人から探す</h1>';
-    $ncorp = (int)$db->query("SELECT count(DISTINCT corp_key) FROM offices WHERE kind='訪問介護'")->fetchColumn();
+    $ncorp = (int)$db->query("SELECT count(DISTINCT corp_key) FROM offices WHERE kind='訪問介護' AND corp_key <> ''")->fetchColumn();
     $ngh = (int)$db->query("SELECT count(*) FROM offices WHERE kind='訪問介護'")->fetchColumn();
     echo '<p class="lead">全国' . n($ngh) . 'か所の訪問介護を<strong>' . n($ncorp) . '法人</strong>が運営しています'
        . '（1法人あたり平均' . number_format($ngh / max(1, $ncorp), 2) . 'か所）。'
@@ -534,8 +537,9 @@ if ($path === 'corps') {
     $sql = "SELECT corp_key, max(corp) corp, count(*) n, count(DISTINCT pref) np,
                    sum(CASE WHEN kind='訪問介護' THEN 1 ELSE 0 END) gh
             FROM offices";
-    $args = array();
-    if ($kw !== '') { $sql .= ' WHERE corp LIKE ?'; $args[] = '%' . $kw . '%'; }
+    // 法人名が空欄の事業所（訪問介護175か所）は1法人として束ねない
+    $sql .= " WHERE corp_key <> ''"; $args = array();
+    if ($kw !== '') { $sql .= ' AND corp LIKE ?'; $args[] = '%' . $kw . '%'; }
     $sql .= ' GROUP BY corp_key ORDER BY gh DESC, n DESC LIMIT 200';
     $st = $db->prepare($sql); $st->execute($args);
     $rows = $st->fetchAll();
@@ -555,12 +559,12 @@ if ($path === 'corps') {
         }
         echo '</tbody></table></div>';
     }
-    echo '<p class="src">「消えた」は事業所全体（訪問介護・居宅介護支援・定期巡回・随時対応型訪問介護看護など5種別）の数です。'
+    echo '<p class="src">「消えた」は事業所全体（訪問介護・居宅介護支援・定期巡回・随時対応型訪問介護看護・夜間対応型訪問介護の4種別）の数です。'
        . '訪問介護だけの内訳は法人ページでご覧ください。'
        . '<strong>消えた数だけを見ないでください</strong>——左の「訪問介護」「事業所全体」と並べて読みます。'
        . 'いまの数がそれ以上に多い法人は、法人の再編で事業所番号が付け替わった可能性が高く、事業所が無くなったという話ではありません。</p>';
     echo '<p class="src">法人は<strong>法人番号ではなく正規化した法人名</strong>で束ねています。法人番号には入力ゆれがあり'
-       . '（1社に13桁が6種類、13桁でない値604件、空1,513件）、番号で束ねると同じ法人がばらけて数え落とすためです。'
+       . '（空欄が1,853件、同じ法人名に別の番号がついている例も多数）、番号で束ねると同じ法人がばらけて数え落とすためです。'
        . 'そのぶん同名の別法人が混ざることがあるので、法人ページで法人番号と所在地をご確認ください。</p>';
     foot_html();
     exit;
@@ -740,10 +744,6 @@ if (preg_match('#^pref/([^/]+)$#', $path, $m)) {
         echo '<h2>公表データから消えた事業所</h2>';
         echo '<p class="lead">' . h($pref) . 'では、これまでに<strong>' . n($gone_n) . '件</strong>が公表データから消えています'
            . '（うち2024年12月末から2026年6月末までの1年半が' . n($gone_after) . '件）。<strong>消えた理由は公表されていません。</strong></p>';
-        $capq = $db->prepare("SELECT sum(capacity) FROM gone WHERE pref=? AND last_tp>='20250101'");
-        $capq->execute(array($pref));
-        $cap_gone = (int)$capq->fetchColumn();
-        if ($cap_gone) { echo '<p class="lead">そのうち定員が公表されていた分（居宅介護支援・定期巡回・随時対応型訪問介護看護など）を足すと<strong>' . n($cap_gone) . '人分</strong>です。最後に公表されたときの定員の合計で、そこで暮らしていた人数ではありません。<strong>訪問介護には定員の公表がない</strong>ので、この数に訪問介護は入っていません。</p>'; }
         echo '<div class="tscroll"><table class="t"><thead><tr><th>最後に公表された時点</th><th>種別</th><th>事業所名</th><th>運営法人</th><th>所在</th></tr></thead><tbody>';
         $st = $db->prepare('SELECT kind, name, city, corp, corp_key, last_tp FROM gone WHERE pref=? ORDER BY last_tp DESC, city, kind, name LIMIT 300');
         $st->execute(array($pref));
@@ -757,7 +757,7 @@ if (preg_match('#^pref/([^/]+)$#', $path, $m)) {
     }
 
     echo '<h2>市区町村から選ぶ</h2><div class="panel"><div class="tscroll"><table class="t"><thead><tr><th>市区町村</th>';
-    foreach ($KINDS as $k) { echo '<th class="n">' . h(str_replace(array('訪問介護', '定期巡回・随時対応型訪問介護看護', '夜間対応型訪問介護', '夜間対応型訪問介護'), array('GH', '入所施設', '自立生活', '宿泊訓練'), kl($k))) . '</th>'; }
+    foreach ($KINDS as $k) { echo '<th class="n">' . h(kl($k)) . '</th>'; }
     echo '<th class="n">計</th></tr></thead><tbody>';
     $rows = array();
     $st = $db->prepare('SELECT city_key, kind, count(*) n FROM offices WHERE pref=? GROUP BY city_key, kind');
@@ -769,8 +769,8 @@ if (preg_match('#^pref/([^/]+)$#', $path, $m)) {
         foreach ($KINDS as $k) { echo '<td class="n">' . (isset($kk[$k]) ? n($kk[$k]) : '—') . '</td>'; }
         echo '<td class="n">' . n(array_sum($kk)) . '</td></tr>';
     }
-    echo '</tbody></table></div><p class="src">列は左から GH（訪問介護＝訪問介護）・居宅介護支援・入所施設（定期巡回・随時対応型訪問介護看護）・自立生活（夜間対応型訪問介護）・宿泊訓練（夜間対応型訪問介護）です。</p></div>';
-    echo '<h2>住所から、通える事業所を探す</h2>';
+    echo '</tbody></table></div><p class="src">ケアマネ事業所＝居宅介護支援、定期巡回＝定期巡回・随時対応型訪問介護看護、夜間対応型＝夜間対応型訪問介護です。</p></div>';
+    echo '<h2>住所から、近くの事業所を探す</h2>';
     search_form($pref);
     foot_html();
     exit;
@@ -815,7 +815,7 @@ if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
     head_html($title . '｜' . $SITE, $desc, $here);
 
     echo '<h1>' . h($place) . 'の訪問介護・ケアマネ事業所</h1>';
-    echo '<p class="lead">' . h(tp_label($LATEST)) . '時点で公表されている事業所です。<strong>空きも定員も公表されていません</strong>——入れるかどうかは事業所に聞くしかありません。'
+    echo '<p class="lead">' . h(tp_label($LATEST)) . '時点で公表されている事業所です。<strong>空き状況は公表されていません</strong>——受けてもらえるかは事業所か地域包括支援センターに聞くしかありません。'
        . ($ward ? ' <a href="' . h($SELF . '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck)) . '">' . h($ck) . '全体を見る</a>' : '') . '</p>';
     echo '<div class="panel"><div class="grid">';
     foreach ($KINDS as $k) {
@@ -858,9 +858,6 @@ if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
             echo '<p class="lead">前の時点には載っていて、' . h(tp_label($LATEST)) . '時点には載っていない事業所です。'
                . '2024年12月末から2026年6月末までの1年半に消えたのは<strong>' . n($recent) . '件</strong>です。'
                . '<strong>消えた理由は公表されていません</strong>（廃止・指定の取消・登録の更新漏れなど、どれかは分かりません）。</p>';
-            $cap_gone = 0;
-            foreach ($s['gone'] as $g) { if ($g['last_tp'] >= '20250101') { $cap_gone += (int)$g['capacity']; } }
-            if ($cap_gone) { echo '<p class="lead">そのうち定員が公表されていた分を足すと<strong>' . n($cap_gone) . '人分</strong>です。最後に公表されたときの定員の合計で、そこで暮らしていた人数ではありません。<strong>訪問介護には定員の公表がない</strong>ので、この数には入っていません。</p>'; }
             echo '<div class="tscroll"><table class="t"><thead><tr><th>最後に公表された時点</th><th>種別</th><th>事業所名</th><th>運営法人</th><th>所在</th></tr></thead><tbody>';
             foreach ($s['gone'] as $g) {
                 echo '<tr><td>' . h(tp_label($g['last_tp'])) . '</td><td>' . h(kl($g['kind'])) . '</td><td>' . h($g['name']) . '</td>'
@@ -895,7 +892,7 @@ if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
         }
         echo '</p>';
     }
-    echo '<h2>住所から、通える事業所を探す</h2>';
+    echo '<h2>住所から、近くの事業所を探す</h2>';
     search_form($place);
     foot_html();
     exit;
@@ -907,7 +904,7 @@ if ($path === 'gone') {
     $desc = '訪問介護・居宅介護支援・定期巡回・随時対応型訪問介護看護などについて、前の時点には公表されていて次の時点には載っていない事業所の数を、時点ごとに数えました。都道府県別と運営法人別の内訳、CSVつき。';
     head_html($title . '｜' . $SITE, $desc, '/gone');
     echo '<h1>公表データから消えた事業所</h1>';
-    echo '<p class="lead">厚生労働省 の公表データは時点ごとに出ます。ある時点に載っていた事業所番号が、次から載らなくなることがあります。'
+    echo '<p class="lead">厚生労働省の公表データは時点ごとに出ます。ある時点に載っていた事業所番号が、次から載らなくなることがあります。'
        . 'ここではその数を数えています。<strong>消えた理由は公表されていません。</strong>廃止したのか、指定が取り消されたのか、'
        . '登録が更新されなかっただけなのかは、この数字からは分かりません。</p>';
     echo '<div class="tscroll"><table class="t"><thead><tr><th>最後に公表された時点</th>';
@@ -918,22 +915,20 @@ if ($path === 'gone') {
         echo '<tr><td>' . h(tp_label($t)) . '</td>';
         foreach ($KINDS as $k) {
             $v = isset($NAT['gone'][$t][$k]) ? $NAT['gone'][$t][$k] : array('n' => 0, 'cap' => 0);
-            echo '<td class="n">' . n($v['n']) . ($v['cap'] ? '<br><span style="font-size:11px;color:var(--mut)">定員 ' . n($v['cap']) . '</span>' : '') . '</td>';
+            echo '<td class="n">' . n($v['n']) . '</td>';
         }
         echo '</tr>';
     }
     echo '</tbody></table></div>';
-    echo '<p class="src">「2024年3月末」の行は、2024年3月末時点を最後に公表データから消えた事業所の数です（2024年度に消えたもの）。</p>';
+    echo '<p class="src">「2024年12月末」の行は、2024年12月末時点を最後に公表データから消えた事業所の数です（2024年12月末から2026年6月末までの1年半に消えたもの）。時点が増えれば行も増えます。</p>';
 
     echo '<h2>都道府県別（2024年12月末から2026年6月末までの1年半に消えたもの）</h2>';
-    echo '<p class="lead">障害福祉サービスの報酬改定は2024年4月に行われました。その前後で分けて数えています。</p>';
     $before = array(); $after = array(); $cap_after = array();
     $st = $db->query("SELECT pref, kind, last_tp, count(*) n, sum(capacity) cap FROM gone GROUP BY pref, kind, last_tp");
     foreach ($st as $r) {
         $p0 = $r['pref']; $k0 = $r['kind'];
         if ($r['last_tp'] >= '20250101') {
             $after[$p0][$k0] = (isset($after[$p0][$k0]) ? $after[$p0][$k0] : 0) + (int)$r['n'];
-            if ($k0 === '訪問介護') { $cap_after[$p0] = (isset($cap_after[$p0]) ? $cap_after[$p0] : 0) + (int)$r['cap']; }
         } else {
             $before[$p0][$k0] = (isset($before[$p0][$k0]) ? $before[$p0][$k0] : 0) + (int)$r['n'];
         }
@@ -941,45 +936,44 @@ if ($path === 'gone') {
     $rows = array();
     foreach ($after as $p => $kk) {
         $a = isset($kk['訪問介護']) ? $kk['訪問介護'] : 0;
-        $b0 = isset($before[$p]['訪問介護']) ? $before[$p]['訪問介護'] : 0;
-        $rows[] = array('pref' => $p, 'a_after' => $a, 'a_before' => $b0,
-                        'cap' => isset($cap_after[$p]) ? $cap_after[$p] : 0, 'all' => array_sum($kk));
+        $b0 = isset($kk['居宅介護支援']) ? $kk['居宅介護支援'] : 0;
+        $rows[] = array('pref' => $p, 'a_after' => $a, 'a_before' => $b0, 'all' => array_sum($kk));
     }
     usort($rows, function ($x, $y) { return $y['a_after'] - $x['a_after']; });
-    echo '<div class="tscroll"><table class="t"><thead><tr><th>都道府県</th><th class="n">GH（2024年度以降）</th><th class="n">GH（それ以前）</th><th class="n">5種別の合計</th></tr></thead><tbody>';
+    echo '<div class="tscroll"><table class="t"><thead><tr><th>都道府県</th><th class="n">訪問介護</th><th class="n">ケアマネ事業所</th><th class="n">4種別の合計</th></tr></thead><tbody>';
     foreach ($rows as $r) {
         echo '<tr><td><a href="' . h($SELF . '/pref/' . rawurlencode($r['pref'])) . '">' . h($r['pref']) . '</a></td><td class="n">' . n($r['a_after'])
            . '</td><td class="n">' . n($r['a_before']) . '</td><td class="n">' . n($r['all']) . '</td></tr>';
     }
     echo '</tbody></table></div>';
-    echo '<p class="src">GH＝訪問介護。<strong>訪問介護には定員の公表がない</strong>ので、消えた定員という数え方はできません。</p>';
+    echo '<p class="src">4種別＝訪問介護・ケアマネ事業所（居宅介護支援）・定期巡回・随時対応型訪問介護看護・夜間対応型訪問介護。訪問介護の多い順。</p>';
 
     // ── ここがこの製品の眼目。**消えた事業所は、法人に偏る。** ────────────
     echo '<h2>運営法人ごとに見る（訪問介護が消えた数の多い順）</h2>';
     echo '<p class="lead">消えた事業所は、全国にまんべんなく散っているわけではありません。'
        . '同じ法人の訪問介護が、同じ時点にまとめて消えていることがあります。</p>';
-    echo '<p class="lead"><strong>消えた数だけを見ないでください。</strong>右端の「いま公表されているGH」と並べて読みます。'
+    echo '<p class="lead"><strong>消えた数だけを見ないでください。</strong>右端の「いま公表されている訪問介護」と並べて読みます。'
        . '消えた数が多くても<strong>いまの数がそれ以上に多い法人</strong>は、法人の再編などで事業所番号が付け替わった可能性が高く、'
-       . '住む場所が無くなったという話ではありません。逆に<strong>消えた数が多くていまの数が少ない法人</strong>は、実際に事業を畳んだか、'
+       . 'サービスが無くなったという話ではありません。逆に<strong>消えた数が多くていまの数が少ない法人</strong>は、実際に事業を畳んだか、'
        . '指定を取り消されたか、別の法人へ渡したかのどれかです。'
        . '<strong>どちらなのかは公表データには書かれていません。</strong>'
        . 'ここで分かるのは「この法人の名前で公表されていた事業所番号が、公表データから消えた」ということだけです。</p>';
-    echo '<div class="tscroll"><table class="t"><thead><tr><th>運営法人</th><th class="n">消えたGH</th><th class="n">うち2024年度以降</th><th class="n">いま公表されているGH</th></tr></thead><tbody>';
+    echo '<div class="tscroll"><table class="t"><thead><tr><th>運営法人</th><th class="n">消えた訪問介護</th><th class="n">いま公表されている訪問介護</th></tr></thead><tbody>';
     $q = $db->query("SELECT g.corp_key, max(g.corp) corp, count(*) n,
                             sum(CASE WHEN g.last_tp >= '20250101' THEN 1 ELSE 0 END) after_n
-                     FROM gone g WHERE g.kind='訪問介護'
+                     FROM gone g WHERE g.kind='訪問介護' AND g.corp_key <> ''
                      GROUP BY g.corp_key ORDER BY n DESC LIMIT 40");
     $now = $db->prepare("SELECT count(*) FROM offices WHERE kind='訪問介護' AND corp_key=?");
     foreach ($q as $r) {
         $now->execute(array($r['corp_key']));
         $live = (int)$now->fetchColumn();
         echo '<tr><td><a href="' . h($SELF . '/corp/' . rawurlencode($r['corp_key'])) . '">' . h($r['corp']) . '</a></td>'
-           . '<td class="n">' . n($r['n']) . '</td><td class="n">' . n($r['after_n']) . '</td>'
+           . '<td class="n">' . n($r['n']) . '</td>'
            . '<td class="n">' . ($live ? n($live) : '0') . '</td></tr>';
     }
     echo '</tbody></table></div>';
     echo '<p class="src">法人は<strong>法人番号ではなく正規化した法人名</strong>で束ねています。法人番号には入力ゆれがあり'
-       . '（1社に13桁が6種類、13桁でない値604件、空1,513件）、番号で束ねると同じ法人がばらけて数え落とすためです。'
+       . '（空欄が1,853件、同じ法人名に別の番号がついている例も多数）、番号で束ねると同じ法人がばらけて数え落とすためです。'
        . 'そのぶん同名の別法人が混ざることがあります。</p>';
     echo '<p><a class="btn ghost" href="' . h($SELF . '/data/gone.csv') . '">消えた事業所の一覧をCSVで取る</a></p>';
     echo '<h2>市区町村ごとに見る</h2>';
@@ -995,17 +989,17 @@ if ($path === 'data') {
     echo '<h1>データ</h1>';
     echo '<p class="lead">画面で見せているものと同じデータです。加工元が公開データなので、そのまま持ち出せる形で置いています。</p>';
     echo '<div class="panel"><h3>CSV</h3><ul class="plain">';
-    echo '<li><a href="' . h($SELF . '/data/offices.csv') . '">offices.csv</a> — ' . n($NAT['total']) . '事業所（種別・住所・緯度経度・運営法人・営業時間・連絡先。定員は公表がある種別のみ）</li>';
+    echo '<li><a href="' . h($SELF . '/data/offices.csv') . '">offices.csv</a> — ' . n($NAT['total']) . '事業所（種別・住所・緯度経度・運営法人・利用できる曜日・連絡先）</li>';
     echo '<li><a href="' . h($SELF . '/data/gone.csv') . '">gone.csv</a> — 公表データから消えた事業所と、最後に公表された時点</li>';
     echo '</ul><h3>JSON API</h3>';
     echo '<p class="src">' . h($base) . '/api?q=<em>住所</em>&amp;kind=<em>種別</em>&amp;km=<em>範囲</em></p>';
     echo '<p><a class="btn ghost" href="' . h($SELF . '/api?q=' . rawurlencode('名古屋市中区三の丸3-1-1') . '&km=3') . '">試しに叩いてみる</a></p>';
     echo '<h3>出典表示</h3><p class="src">' . h($META['attribution']) . '</p></div>';
-    echo '<div class="panel"><h3>収録している数</h3><div class="tscroll"><table class="t"><thead><tr><th>サービス種別</th><th class="n">事業所</th><th class="n">定員の合計</th></tr></thead><tbody>';
+    echo '<div class="panel"><h3>収録している数</h3><div class="tscroll"><table class="t"><thead><tr><th>サービス種別</th><th class="n">事業所</th></tr></thead><tbody>';
     foreach ($KINDS as $k) {
         $v = isset($NAT['kinds'][$k]) ? $NAT['kinds'][$k] : array('n' => 0, 'cap' => 0);
         echo '<tr><td>' . h(kl($k)) . ($k !== kl($k) ? '<br><span style="font-size:11px;color:var(--mut)">' . h($k) . '</span>' : '')
-           . '</td><td class="n">' . n($v['n']) . '</td><td class="n">' . ($v['cap'] ? n($v['cap']) : '公表なし') . '</td></tr>';
+           . '</td><td class="n">' . n($v['n']) . '</td></tr>';
     }
     echo '</tbody></table></div><p class="src"><strong>訪問介護とケアマネ事業所に定員はありません。</strong>'
        . 'CSVの定員列には0が入っていますが、0人という意味ではありません。</p></div>';
@@ -1025,18 +1019,18 @@ if ($path === 'about') {
        . '<li><strong>運営法人ごとに、いくつ持っていて、いくつ消えたか</strong>（同じ法人が全国に何か所持っているかをたどれます）</li>'
        . '</ul></div>';
     echo '<div class="panel"><h3>何が分からないか（ここが大事です）</h3><ul class="plain">'
-       . '<li><strong>空き状況は分かりません。</strong>公表データに入っていないからです。入居できるかどうかは事業所へ直接お問い合わせください。</li>'
-       . '<li><strong>訪問介護の定員も分かりません。</strong>訪問介護は' . n($NAT['kinds']['訪問介護']['n']) . '件すべて定員が空欄でした（公表項目に入っていません）。定員が出るのは居宅介護支援・定期巡回・随時対応型訪問介護看護・夜間対応型訪問介護だけです。</li>'
+       . '<li><strong>空き状況は分かりません。</strong>公表データに入っていないからです。受けてもらえるかは事業所か地域包括支援センターへお問い合わせください。</li>'
+       . '<li><strong>定員はありません。</strong>訪問系とケアマネ事業所に定員という考え方が無いからです。CSVの「定員」列には0以外の値も入っていますが、定義書に説明が無く定員とは別の何かなので、読んでいません。</li>'
        . '<li><strong>利用料の実額は分かりません。</strong>公表データに無いからです。訪問介護で実際に払う額は事業所ごとに違います。</li>'
        . '<li><strong>消えた事業所が廃止したかどうかは分かりません。</strong>公表データから消えた、という事実だけを書いています。事業が別の法人に引き継がれて、番号だけが変わった場合も「消えた」に数えられます。</li>'
        . '<li><strong>公表件数が増えた＝事業所が増えた、ではありません。</strong>自治体の登録が進んだぶんが混ざります。だから全国の増減は「公表された件数」と書いています。</li>'
-       . '<li><strong>支援の内容・職員の配置・夜間の体制は分かりません。</strong>公表データに無いからです。見学してご確認ください。</li>'
-       . '<li>利用には<strong>要介護・要支援の認定</strong>が要ります。まず市区町村の障害福祉の窓口か、計画相談支援の相談支援専門員にご相談ください。</li>'
+       . '<li><strong>ヘルパーやケアマネの人数・サービスの質は分かりません。</strong>公表データに無いからです。事業所にご確認ください。</li>'
+       . '<li>利用には<strong>要介護・要支援の認定</strong>が要ります。まず市区町村の介護保険の窓口か地域包括支援センターにご相談ください。</li>'
        . '<li>高齢者の<strong>訪問看護は含みません（別の道具 khokan にあります）</strong>。あれは別の制度で、データも別です。</li>'
        . '</ul></div>';
     echo '<div class="panel"><h3>法人をどう束ねているか</h3>'
        . '<p>法人ごとのページは、<strong>法人番号ではなく正規化した法人名</strong>で束ねています。'
-       . '公表データの法人番号には入力ゆれがあり、1社に13桁が6種類ついていたり、13桁でない値が604件、空が1,513件あります。'
+       . '公表データの法人番号には空欄が1,853件あり、同じ法人名に別の番号がついている例も多数あります。'
        . '番号で束ねると同じ法人がばらけて、消えた事業所を数え落とします。</p>'
        . '<p class="src">そのぶん、同じ名前の別法人（社会福祉法人◯◯会が複数の県に実在する場合など）が混ざることがあります。'
        . '法人ページには法人番号と所在地を併記しているので、そこで見分けてください。</p></div>';
@@ -1163,8 +1157,9 @@ if ($q !== '') {
         if (isset($NAT['gone'][$t]['訪問介護'])) { $gone_h += $NAT['gone'][$t]['訪問介護']['n']; }
         if (isset($NAT['gone'][$t]['居宅介護支援'])) { $gone_c += $NAT['gone'][$t]['居宅介護支援']['n']; }
     }
-    $zero_c = (int)$db->query("SELECT count(*) FROM (SELECT DISTINCT pref, city_key FROM offices) a WHERE NOT EXISTS (SELECT 1 FROM offices o WHERE o.kind='居宅介護支援' AND o.pref=a.pref AND o.city_key=a.city_key)")->fetchColumn();
-    $zero_h = (int)$db->query("SELECT count(*) FROM (SELECT DISTINCT pref, city_key FROM offices) a WHERE NOT EXISTS (SELECT 1 FROM offices o WHERE o.kind='訪問介護' AND o.pref=a.pref AND o.city_key=a.city_key)")->fetchColumn();
+    $zero = !empty($META['zero_json']) ? json_decode($META['zero_json'], true) : array();
+    $zero_c = isset($zero['居宅介護支援']) ? (int)$zero['居宅介護支援'] : 0;
+    $zero_h = isset($zero['訪問介護']) ? (int)$zero['訪問介護'] : 0;
     echo '<h2>' . h(tp_label($first_tp)) . 'から' . h(tp_label($LATEST)) . 'の1年半で、どう動いたか</h2>';
     echo '<div class="panel">';
     if ($h1 && $h2 && $c1 && $c2) {
@@ -1189,14 +1184,15 @@ if ($q !== '') {
 
     // 法人の集中。1法人あたり平均1.5か所の世界に、300か所超の法人がいる。
     echo '<h2>訪問介護を運営している法人</h2>';
-    $ncorp = (int)$db->query("SELECT count(DISTINCT corp_key) FROM offices WHERE kind='訪問介護'")->fetchColumn();
+    $ncorp = !empty($META['ncorp_main']) ? (int)$META['ncorp_main'] : (int)$db->query("SELECT count(DISTINCT corp_key) FROM offices WHERE kind='訪問介護' AND corp_key <> ''")->fetchColumn();
     echo '<div class="panel">';
     echo '<p class="lead">全国' . n($na) . 'か所の訪問介護を、<strong>' . n($ncorp) . '法人</strong>が運営しています'
        . '（1法人あたり平均' . number_format($na / max(1, $ncorp), 2) . 'か所）。'
        . 'ほとんどは1〜2か所の小さな法人ですが、上位には全国に数百か所を持つ法人がいます。</p>';
     echo '<div class="tscroll"><table class="t"><thead><tr><th>運営法人</th><th class="n">訪問介護</th><th class="n">都道府県</th></tr></thead><tbody>';
-    foreach ($db->query("SELECT corp_key, max(corp) corp, count(*) n, count(DISTINCT pref) np
-                         FROM offices WHERE kind='訪問介護' GROUP BY corp_key ORDER BY n DESC LIMIT 20") as $r) {
+    $top = !empty($META['top_corps_json']) ? json_decode($META['top_corps_json'], true) : null;
+    if ($top === null) { $top = $db->query("SELECT corp_key, max(corp) corp, count(*) n, count(DISTINCT pref) np FROM offices WHERE kind='訪問介護' AND corp_key <> '' GROUP BY corp_key ORDER BY n DESC LIMIT 20")->fetchAll(); }
+    foreach ($top as $r) {
         echo '<tr><td><a href="' . h($SELF . '/corp/' . rawurlencode($r['corp_key'])) . '">' . h($r['corp']) . '</a></td>'
            . '<td class="n">' . n($r['n']) . '</td><td class="n">' . n($r['np']) . '</td></tr>';
     }
@@ -1206,7 +1202,8 @@ if ($q !== '') {
 
     echo '<h2>都道府県から探す</h2><div class="panel"><p class="src" style="line-height:2.4">';
     $cnt = array();
-    foreach ($db->query('SELECT pref, count(*) n FROM offices GROUP BY pref') as $r) { $cnt[$r['pref']] = (int)$r['n']; }
+    if (!empty($META['pref_counts_json'])) { foreach (json_decode($META['pref_counts_json'], true) as $pp => $nn) { $cnt[$pp] = (int)$nn; } }
+    else { foreach ($db->query('SELECT pref, count(*) n FROM offices GROUP BY pref') as $r) { $cnt[$r['pref']] = (int)$r['n']; } }
     foreach ($PREFS as $pp) {
         if (!isset($cnt[$pp])) { continue; }
         echo '<a href="' . h($SELF . '/pref/' . rawurlencode($pp)) . '">' . h($pp) . '</a>（' . n($cnt[$pp]) . '）　';

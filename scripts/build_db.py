@@ -211,10 +211,34 @@ def main() -> int:
         "tp_labels": json.dumps({t: tp_label(t) for t in tps}, ensure_ascii=False),
         "kinds": json.dumps(list(KINDS.values()), ensure_ascii=False),
         "offices": str(n_off), "counts_rows": str(n_counts), "gone_rows": str(n_gone),
-        "corps": str(conn.execute("SELECT count(DISTINCT corp_key) FROM offices").fetchone()[0]),
+        "corps": str(conn.execute("SELECT count(DISTINCT corp_key) FROM offices WHERE corp_key <> ''").fetchone()[0]),
         "source_url": SRC_URL, "attribution": ATTRIBUTION,
         "built_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
+    # トップページの集計は**取り込み時に計算して meta に埋める**。
+    # 73,098件を毎リクエスト GROUP BY すると heteml で18秒かかった（2026-09-22 実測。他ページは0.25秒）。
+    nat = {"kinds": {}, "total": 0, "capacity": 0, "series": {}, "gone": {}}
+    for kind, n, cap in conn.execute("SELECT kind, count(*), sum(capacity) FROM offices GROUP BY kind"):
+        nat["kinds"][kind] = {"n": n, "cap": int(cap or 0)}; nat["total"] += n; nat["capacity"] += int(cap or 0)
+    for tp, kind, n in conn.execute("SELECT tp, kind, sum(n) FROM counts GROUP BY tp, kind ORDER BY tp"):
+        nat["series"].setdefault(kind, {})[tp] = n
+    for tp, kind, n, cap in conn.execute("SELECT last_tp, kind, count(*), sum(capacity) FROM gone GROUP BY last_tp, kind ORDER BY last_tp"):
+        nat["gone"].setdefault(tp, {})[kind] = {"n": n, "cap": int(cap or 0)}
+    main_kind = list(KINDS.values())[0]
+    top = [dict(corp_key=ck, corp=corp, n=n, np=np_) for ck, corp, n, np_ in conn.execute(
+        "SELECT corp_key, max(corp), count(*) n, count(DISTINCT pref) FROM offices WHERE kind=? AND corp_key <> '' GROUP BY corp_key ORDER BY n DESC LIMIT 20", (main_kind,))]
+    cities = conn.execute("SELECT DISTINCT pref, city_key FROM offices").fetchall()
+    has = {}
+    for kind, pref, ck in conn.execute("SELECT DISTINCT kind, pref, city_key FROM offices"):
+        has.setdefault(kind, set()).add((pref, ck))
+    zero = {k: sum(1 for c in cities if c not in has.get(k, set())) for k in KINDS.values()}
+    meta.update({
+        "nat_json": json.dumps(nat, ensure_ascii=False),
+        "top_corps_json": json.dumps(top, ensure_ascii=False),
+        "ncorp_main": str(conn.execute("SELECT count(DISTINCT corp_key) FROM offices WHERE kind=? AND corp_key <> ''", (main_kind,)).fetchone()[0]),
+        "zero_json": json.dumps(zero, ensure_ascii=False),
+        "pref_counts_json": json.dumps({p: n for p, n in conn.execute("SELECT pref, count(*) FROM offices GROUP BY pref")}, ensure_ascii=False),
+    })
     conn.executemany("INSERT INTO meta (k,v) VALUES (?,?)", list(meta.items()))
     conn.commit()
 
