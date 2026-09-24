@@ -36,10 +36,31 @@ $DB_PATH = $DATA_DIR . '/kkaigo.sqlite';
 $SELF = strtok($_SERVER['SCRIPT_NAME'], '?');           // 例: /kkaigo.php
 $GSI = 'https://msearch.gsi.go.jp/address-search/AddressSearch';
 $OGP = 'https://kurage.exbridge.jp/images/ogp/kkaigo.png';
-$KINDS = array('訪問介護', '居宅介護支援', '定期巡回・随時対応型訪問介護看護', '夜間対応型訪問介護');
+// **画面の並びは事業所数の多い順ではなく、探されている順。** 検索需要を実測して決めた
+// （横浜市の例・月間: 特別養護老人ホーム390／老人ホーム320／有料老人ホーム170／
+//  サ高住170／デイサービス110／介護老人保健施設110）。2026-09-24 に4→17種別へ。
+$KINDS = array(
+    '訪問介護', '居宅介護支援',
+    '特別養護老人ホーム', '介護老人保健施設', '地域密着型特別養護老人ホーム',
+    '有料老人ホーム（特定施設）', 'サービス付き高齢者向け住宅（特定施設）', '軽費老人ホーム（特定施設）',
+    '認知症対応型共同生活介護（グループホーム）',
+    '通所介護（デイサービス）', '地域密着型通所介護', '通所リハビリテーション', '認知症対応型通所介護',
+    '短期入所生活介護（ショートステイ）', '短期入所療養介護（老健）',
+    '定期巡回・随時対応型訪問介護看護', '夜間対応型訪問介護',
+);
 // 画面に出す通り名。「居宅介護支援」は制度名で、探している家族は「ケアマネ」で探す
-$ALIAS = array('居宅介護支援' => 'ケアマネ事業所', '定期巡回・随時対応型訪問介護看護' => '定期巡回', '夜間対応型訪問介護' => '夜間対応型');
+$ALIAS = array(
+    '居宅介護支援' => 'ケアマネ事業所',
+    '定期巡回・随時対応型訪問介護看護' => '定期巡回', '夜間対応型訪問介護' => '夜間対応型',
+    '有料老人ホーム（特定施設）' => '有料老人ホーム', '軽費老人ホーム（特定施設）' => '軽費老人ホーム',
+    'サービス付き高齢者向け住宅（特定施設）' => 'サービス付き高齢者向け住宅',
+    '認知症対応型共同生活介護（グループホーム）' => 'グループホーム（認知症）',
+    '通所介護（デイサービス）' => 'デイサービス', '地域密着型通所介護' => '地域密着型デイサービス',
+    '認知症対応型通所介護' => '認知症対応型デイサービス',
+    '短期入所生活介護（ショートステイ）' => 'ショートステイ', '短期入所療養介護（老健）' => 'ショートステイ（老健）',
+);
 // 訪問系とケアマネに定員という考え方は無い（CSVの「定員」列は0）。画面に定員を出さない。
+// 入所・通所系は定員に意味があるので、0 のときだけ出さない。
 $NO_CAPACITY = array('訪問介護', '居宅介護支援', '定期巡回・随時対応型訪問介護看護', '夜間対応型訪問介護');
 // 都道府県は JIS の順（北海道→沖縄）で出す。文字コード順に並べると「三重県」が先頭に来る。
 $PREFS = array('北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県',
@@ -431,6 +452,13 @@ if ($path === 'sitemap.xml' || preg_match('#^sitemap-(\d+)\.xml$#', $path, $sm))
         foreach ($st as $r) {
             echo '<url><loc>' . h($base . '/city/' . rawurlencode($r['pref']) . '/' . rawurlencode($r['city_key']) . '/' . rawurlencode($r['city'])) . '</loc><lastmod>' . $LASTMOD . '</lastmod><changefreq>monthly</changefreq></url>';
         }
+        // **市区町村 × 種別のページ。** 住民は「横浜市 特別養護老人ホーム」のように
+        // 市区町村＋種別で検索する（実測 月390）。**事業所が1か所もない組み合わせは出さない**
+        // （中身の無いページを何万枚も索引に送ることになる）。
+        $st = $db->query('SELECT pref, city_key, kind, count(*) n FROM offices GROUP BY pref, city_key, kind HAVING n > 0 ORDER BY pref, city_key, kind');
+        foreach ($st as $r) {
+            echo '<url><loc>' . h($base . '/city/' . rawurlencode($r['pref']) . '/' . rawurlencode($r['city_key']) . '/k/' . rawurlencode($r['kind'])) . '</loc><lastmod>' . $LASTMOD . '</lastmod><changefreq>monthly</changefreq></url>';
+        }
     } else {
         $off = ($sm[1] - 1) * $per;
         $st = $db->prepare('SELECT id FROM offices ORDER BY id LIMIT ? OFFSET ?');
@@ -777,15 +805,21 @@ if (preg_match('#^pref/([^/]+)$#', $path, $m)) {
 }
 
 // ── 市区町村ページ ─────────────────────────────────────
-if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
+// /city/<県>/<市>[/<区>][/k/<種別>]
+// **種別ごとのページを分ける。** 住民は「横浜市 特別養護老人ホーム」のように
+// 市区町村＋種別で検索する（実測 月390）。1枚にまとめると、その語で戦うページが無くなる。
+if (preg_match('#^city/([^/]+)/([^/]+?)(?:/(?!k/)([^/]+))?(?:/k/([^/]+))?$#', $path, $m)) {
     $pref = rawurldecode($m[1]); $ck = rawurldecode($m[2]);
-    $ward = isset($m[3]) ? rawurldecode($m[3]) : '';
+    $ward = isset($m[3]) && $m[3] !== '' ? rawurldecode($m[3]) : '';
+    $kind1 = isset($m[4]) && $m[4] !== '' ? rawurldecode($m[4]) : '';
+    if ($kind1 !== '' && !in_array($kind1, $KINDS, true)) { $kind1 = ''; }
     $s = city_stats($db, $pref, $ck);
-    $here = '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck) . ($ward ? '/' . rawurlencode($ward) : '');
+    $here = '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck) . ($ward ? '/' . rawurlencode($ward) : '')
+          . ($kind1 ? '/k/' . rawurlencode($kind1) : '');
     if ($ward) {
         $chk = $db->prepare('SELECT count(*) FROM offices WHERE pref=? AND city_key=? AND city=?');
         $chk->execute(array($pref, $ck, $ward));
-        if (!(int)$chk->fetchColumn()) { $ward = ''; $here = '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck); }
+        if (!(int)$chk->fetchColumn()) { $ward = ''; $here = '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck) . ($kind1 ? '/k/' . rawurlencode($kind1) : ''); }
     }
     if (!$s['total'] && !count($s['gone'])) {
         http_response_code(404);
@@ -795,12 +829,14 @@ if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
     }
     $where = 'pref=? AND city_key=?'; $args = array($pref, $ck);
     if ($ward) { $where .= ' AND city=?'; $args[] = $ward; }
+    $where_all = $where; $args_all = $args;          // 種別の内訳は絞り込み前の数で出す
+    if ($kind1) { $where .= ' AND kind=?'; $args[] = $kind1; }
     $place = $pref . ($ward ? $ward : $ck);
 
     // 種別ごとの件数。区が指定されていればその区だけ数える。
     $kc = array(); $total = 0; $capsum = 0;
-    $st = $db->prepare("SELECT kind, count(*) n, sum(capacity) cap, sum(capacity IS NULL) nocap FROM offices WHERE $where GROUP BY kind");
-    $st->execute($args);
+    $st = $db->prepare("SELECT kind, count(*) n, sum(capacity) cap, sum(capacity IS NULL) nocap FROM offices WHERE $where_all GROUP BY kind");
+    $st->execute($args_all);
     foreach ($st as $r) {
         $kc[$r['kind']] = array('n' => (int)$r['n'], 'cap' => (int)$r['cap'], 'nocap' => (int)$r['nocap']);
         $total += (int)$r['n']; $capsum += (int)$r['cap'];
@@ -808,22 +844,39 @@ if (preg_match('#^city/([^/]+)/([^/]+)(?:/([^/]+))?$#', $path, $m)) {
 
     $a = isset($kc['訪問介護']) ? $kc['訪問介護']['n'] : 0;
     $b = isset($kc['居宅介護支援']) ? $kc['居宅介護支援']['n'] : 0;
-    $title = $place . 'の訪問介護・ケアマネ事業所一覧（' . n($a) . 'か所・運営法人つき）';
-    $desc = $place . 'の訪問介護・ケアマネ事業所' . n($a) . 'か所、居宅介護支援' . n($b) . 'か所など事業所計' . n($total) . 'か所を、住所・電話・運営法人つきで一覧にしました。'
-          . (!$ward && count($s['gone']) ? '公表データから消えた事業所' . n(count($s['gone'])) . '件も掲載。' : '')
-          . tp_label($LATEST) . '時点の公表データ。空き状況は各事業所へ。';
+    if ($kind1) {
+        $kn = kl($kind1);
+        $n1 = isset($kc[$kind1]) ? $kc[$kind1]['n'] : 0;
+        $cap1 = isset($kc[$kind1]) ? $kc[$kind1]['cap'] : 0;
+        $total = $n1;
+        $title = $place . 'の' . $kn . '一覧（' . n($n1) . 'か所・住所と運営法人つき）';
+        $desc = $place . 'の' . $kn . '' . n($n1) . 'か所を、住所・電話・運営法人つきで一覧にしました。'
+              . ($cap1 ? '定員は計' . n($cap1) . '人。' : '')
+              . tp_label($LATEST) . '時点の厚生労働省の公表データ。空き状況は各事業所へ。';
+    } else {
+        $title = $place . 'の介護事業所一覧（訪問介護' . n($a) . 'か所ほか計' . n($total) . 'か所）';
+        $desc = $place . 'の訪問介護' . n($a) . 'か所、ケアマネ事業所' . n($b) . 'か所、特別養護老人ホーム・デイサービスなど計' . n($total) . 'か所を、住所・電話・運営法人つきで一覧にしました。'
+              . (!$ward && count($s['gone']) ? '公表データから消えた事業所' . n(count($s['gone'])) . '件も掲載。' : '')
+              . tp_label($LATEST) . '時点の公表データ。空き状況は各事業所へ。';
+    }
     head_html($title . '｜' . $SITE, $desc, $here);
 
-    echo '<h1>' . h($place) . 'の訪問介護・ケアマネ事業所</h1>';
+    echo '<h1>' . h($place) . 'の' . ($kind1 ? h(kl($kind1)) : '介護事業所') . '</h1>';
     echo '<p class="lead">' . h(tp_label($LATEST)) . '時点で公表されている事業所です。<strong>空き状況は公表されていません</strong>——受けてもらえるかは事業所か地域包括支援センターに聞くしかありません。'
        . ($ward ? ' <a href="' . h($SELF . '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck)) . '">' . h($ck) . '全体を見る</a>' : '') . '</p>';
     echo '<div class="panel"><div class="grid">';
+    $cbase = '/city/' . rawurlencode($pref) . '/' . rawurlencode($ck) . ($ward ? '/' . rawurlencode($ward) : '');
     foreach ($KINDS as $k) {
         $v = isset($kc[$k]) ? $kc[$k] : null;
-        echo '<div class="card' . ($v ? '' : ' none') . '"><div class="k">' . h(kl($k)) . '</div>';
+        $on = ($k === $kind1);
+        $href = $SELF . $cbase . ($on ? '' : '/k/' . rawurlencode($k));
+        $tag = $v ? 'a' : 'div';
+        echo '<' . $tag . ' class="card' . ($v ? '' : ' none') . '"' . ($v ? ' href="' . h($href) . '" style="text-decoration:none;color:inherit' . ($on ? ';outline:2px solid var(--teal)' : '') . '"' : '') . '>';
+        echo '<div class="k">' . h(kl($k)) . '</div>';
         echo '<div class="v">' . ($v ? n($v['n']) . '<span style="font-size:14px">か所</span>' : '0') . '</div>';
-        echo '<div class="s">' . ($v && $v['cap'] ? '定員 計' . n($v['cap']) . '人' . ($v['nocap'] ? '（' . n($v['nocap']) . 'か所は定員の公表なし）' : '') : '定員という考え方がありません') . '</div></div>';
+        echo '<div class="s">' . ($v && $v['cap'] ? '定員 計' . n($v['cap']) . '人' . ($v['nocap'] ? '（' . n($v['nocap']) . 'か所は定員の公表なし）' : '') : '定員という考え方がありません') . '</div></' . $tag . '>';
     }
+    if ($kind1) { echo '<div class="card"><div class="k">すべての種別</div><div class="v" style="font-size:16px"><a href="' . h($SELF . $cbase) . '">' . h($place) . 'の全事業所</a></div></div>'; }
     echo '</div></div>';
 
     if (count($s['wards'])) {
