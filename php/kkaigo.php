@@ -506,9 +506,12 @@ if (preg_match('#^office/(\d+)$#', $path, $m)) {
     $st->execute(array((int)$m[1]));
     $o = $st->fetch();
     if (!$o) { http_response_code(404); head_html('見つかりません｜' . $SITE, '指定された事業所は見つかりませんでした。', '/'); echo '<h1>見つかりません</h1><p class="lead">この番号の事業所は公表データにありません。</p>'; search_form(); foot_html(); exit; }
-    $title = $o['name'] . '（' . kl($o['kind']) . '・' . $o['pref'] . $o['city'] . '）の住所・連絡先・運営法人';
-    $desc = $o['pref'] . $o['city'] . $o['addr'] . 'の' . $o['kind'] . '「' . $o['name'] . '」。'
-          . ($o['capacity'] !== null ? '定員' . n($o['capacity']) . '人。' : '定員は公表されていません。')
+    // 検索は事業所名で来る（2026-09 GSC: 上位の語はほぼ事業所名）。知りたいのは電話と住所なので、
+    // 説明文の先頭に電話番号を置く。「定員は公表されていません」は全件同じ文になるので、定員は有るときだけ書く。
+    $title = $o['name'] . '（' . kl($o['kind']) . '・' . $o['pref'] . $o['city'] . '）の電話番号・住所・運営法人';
+    $desc = '「' . $o['name'] . '」（' . $o['kind'] . '）の電話は' . ($o['tel'] ? $o['tel'] : '公表なし') . '。住所は'
+          . $o['pref'] . $o['city'] . $o['addr'] . '。'
+          . ($o['capacity'] !== null ? '定員' . n($o['capacity']) . '人。' : '')
           . '運営は' . $o['corp'] . '。同じ法人の他の事業所と、近くの事業所も距離順で探せます（' . tp_label($LATEST) . '時点の公表データ）。';
     $ld = array('@type' => 'GovernmentService', 'name' => $o['name'],
                 'serviceType' => $o['kind'], 'areaServed' => $o['pref'] . $o['city'],
