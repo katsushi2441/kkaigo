@@ -312,6 +312,11 @@ function foot_html() {
     echo '<p class="src">名古屋市内の会社なら、<a href="https://exbridge.jp/ai-it-komon.html?ref=kkaigo">AI-IT顧問契約</a>'
        . '（月15時間・税別150,000円）の期間中に構築できる商品は、商品代金をいただかず当社が設置まで行います。'
        . 'ソースコードごと御社の資産として残ります。</p>';
+    // 国会での議論へのリンク（当社の公開先でだけ）。介護・医療の負担を調べに来た人に、関係する国会の質疑と答弁を見せる
+    if (($_SERVER['HTTP_HOST'] ?? '') === 'kurage.exbridge.jp') {
+        echo '<p class="src">国会での議論: <a href="https://xb4g.com/giin/tracker/koki-koreisha-futan?ref=kkaigo-foot">後期高齢者の窓口負担2割</a>・'
+           . '<a href="https://xb4g.com/giin/tracker/otc-ruiji-yaku?ref=kkaigo-foot">OTC類似薬の保険給付見直し</a>（国会の質疑と政府答弁）</p>';
+    }
     echo '</div></footer></body></html>';
 }
 
