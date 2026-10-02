@@ -224,7 +224,7 @@ function head_html($title, $desc, $canon, $ld_extra = null) {
        . ':root{--ink:#12202f;--mut:#5d6b7a;--teal:#0a9a8f;--teal-d:#087f76;--line:#dfe7ec;--bg:#f5f8fa;--red-l:#fdecea;--amber-l:#fdf6e3;--blue:#2c6fbb;--blue-l:#eaf2fb}'
        . '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 "Noto Sans JP",system-ui,sans-serif}'
        . 'a{color:var(--teal-d)}.wrap{width:min(960px,100% - 32px);margin:0 auto}'
-       . 'header{background:#fff;border-bottom:1px solid var(--line)}.brand{display:block;padding:14px 0 6px;font-weight:800;font-size:18px;text-decoration:none;color:var(--ink)}'
+       . 'header{background:#fff;border-bottom:1px solid var(--line)}.hrow{display:flex;align-items:center;justify-content:space-between;gap:6px 10px;flex-wrap:wrap}.hrow .brand{padding-bottom:6px}.hcta{display:flex;gap:6px;flex-wrap:wrap;padding-top:8px}.hcta a{display:inline-block;font-size:12.5px;font-weight:700;text-decoration:none;border-radius:999px;padding:5px 11px;border:1px solid var(--line);color:var(--teal-d);background:#fff;white-space:nowrap}.hcta a.hot{background:var(--teal);border-color:var(--teal);color:#fff}@media(max-width:400px){.hcta{gap:4px}.hcta a{font-size:11.5px;padding:4px 8px}}.hcta{padding-bottom:4px}.brand{display:block;padding:14px 0 6px;font-weight:800;font-size:18px;text-decoration:none;color:var(--ink)}'
        . '.menu{display:flex;gap:14px;flex-wrap:wrap;padding-bottom:12px;font-size:14px}.menu a{text-decoration:none;color:var(--mut)}.menu a.on{color:var(--teal-d);font-weight:700}'
        . 'main{padding:22px 0 40px}h1{font-size:26px;line-height:1.4;margin:0 0 10px}h2{font-size:20px;margin:26px 0 10px}h3{font-size:16px;margin:18px 0 8px}.lead{color:var(--mut)}'
        . '.panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}'
@@ -290,8 +290,19 @@ function head_html($title, $desc, $canon, $ld_extra = null) {
     echo '<script type="application/ld+json">' . json_encode(array('@context' => 'https://schema.org', '@graph' => $graph), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '</script>';
     // 再販パートナー募集の枠（中身は kurage_web/partner-bar.js）。当社の公開先でだけ読む（配布版を置いたサイトからは当社へ通信しない）
     if (($_SERVER['HTTP_HOST'] ?? '') === 'kurage.exbridge.jp') echo '<script src="https://kurage.exbridge.jp/partner-bar.js" defer></script>';
-    echo '</head><body><header><div class="wrap">';
+    echo '</head><body><header><div class="wrap"><div class="hrow">';
     echo '<a class="brand" href="' . h($SELF) . '/">' . h($SITE) . '</a>';
+    // 右上の誘導（2026-10-03）。下の窓口まで読まない人が多いので、ヘッダーにも置く。当社の公開先でだけ出す
+    if (($_SERVER['HTTP_HOST'] ?? '') === 'kurage.exbridge.jp') {
+        global $path;
+        $hr = 'kkaigo-head';
+        $op = preg_match('#^(office|corp)/#', (string)$path) ? '#for-operators'
+            : 'https://exbridge.jp/contact.php?subject=' . rawurlencode('事業所の掲載・ITの相談') . '&amp;ref=' . $hr . '-contact#form';
+        echo '<span class="hcta"><a class="hot" href="' . $op . '">事業所の方へ</a>'
+           . '<a href="https://exbridge.jp/ai-it-komon.html?ref=' . $hr . '-komon">AI-IT顧問</a>'
+           . '<a href="https://kurage.exbridge.jp/reseller.html?ref=' . $hr . '-reseller">販売代理店募集</a></span>';
+    }
+    echo '</div>';
     echo '<nav class="menu">';
     foreach (array('/' => '住所から探す', '/corps' => '運営法人から探す', '/gone' => '公表データから消えた事業所', '/data' => 'データ', '/about' => 'このサイトについて') as $u => $t) {
         echo '<a href="' . h($SELF . $u) . '">' . h($t) . '</a>';
