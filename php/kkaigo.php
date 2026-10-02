@@ -299,6 +299,35 @@ function head_html($title, $desc, $canon, $ld_extra = null) {
     echo '</nav></div></header><main><div class="wrap">';
 }
 
+// ── 事業所・法人の方への窓口（2026-10-03） ─────────────────────────
+// 検索から来る人の大半は事業所名で来る（家族・ケアマネ）。その中にいる「事業所・法人の人」に向けて、
+// 掲載の相談・AI-IT顧問契約・販売代理店の3つを目立つ形で出す。出典と直し方の説明は配布版でも出し、
+// 当社への誘導は当社の公開先（kurage.exbridge.jp）でだけ出す（配布版を置いたサイトから当社へ誘導しない）。
+$OP_REF = 'kkaigo';
+function op_jump() {
+    echo '<p style="margin:6px 0 14px"><a href="#for-operators" style="display:inline-block;background:var(--amber-l);border:1px solid #ecd9a6;color:#7a5a00;border-radius:999px;padding:5px 14px;font-size:13px;font-weight:700;text-decoration:none">この事業所・法人の方へ ▸</a></p>';
+}
+function op_box($name, $where, $src_html) {
+    global $OP_REF;
+    $ours = ($_SERVER['HTTP_HOST'] ?? '') === 'kurage.exbridge.jp';
+    $r = $OP_REF . '-' . $where;
+    echo '<section id="for-operators" class="panel" style="border:2px solid var(--teal);background:#f3fbfa">';
+    echo '<h2 style="margin:0 0 6px">この' . ($where === 'corp' ? '法人' : '事業所') . 'の方へ</h2>';
+    echo '<p style="margin:0 0 10px">' . $src_html . '</p>';
+    if ($ours) {
+        $subj = rawurlencode($name . 'の掲載・ITの相談');
+        echo '<div class="grid" style="margin-top:6px">';
+        echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">掲載・ITのご相談</div><div class="s" style="margin:4px 0 10px">このページの内容についてのご質問や、事業所の記録・請求・連絡の手間をシステムで減らしたいご相談を受け付けます（株式会社エクスブリッジ）。</div>'
+           . '<a class="btn" href="https://exbridge.jp/contact.php?subject=' . $subj . '&amp;ref=' . h($r) . '-contact#form">相談する（無料）</a></div>';
+        echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">AI-IT顧問契約</div><div class="s" style="margin:4px 0 10px">月15時間・税別15万円で、事業所の情報システム担当を引き受けます。介護・福祉の記録や事務の自動化も、この時間の中で作ります。名古屋市内の法人が対象です。</div>'
+           . '<a class="btn" href="https://exbridge.jp/ai-it-komon.html?ref=' . h($r) . '-komon">AI-IT顧問契約を見る</a></div>';
+        echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">販売代理店募集</div><div class="s" style="margin:4px 0 10px">取引先や同業の事業所に、当社のAI・業務システムを紹介するだけで報酬が出ます（最大30%）。営業や導入の作業は当社が行います。</div>'
+           . '<a class="btn ghost" href="https://kurage.exbridge.jp/reseller.html?ref=' . h($r) . '-reseller">販売代理店の条件を見る</a></div>';
+        echo '</div>';
+    }
+    echo '</section>';
+}
+
 function foot_html() {
     global $SELF, $META, $LATEST;
     echo '</div></main><footer><div class="wrap">';
@@ -533,6 +562,7 @@ if (preg_match('#^office/(\d+)$#', $path, $m)) {
     echo '<h1>' . h($o['name']) . '</h1>';
     echo '<p class="lead"><span class="tag ' . kcls($o['kind']) . '">' . h(kl($o['kind'])) . '</span>'
        . h($o['pref'] . $o['city'] . $o['addr']) . '</p>';
+    op_jump();
     echo '<div class="panel"><div class="grid">';
     echo '<div class="card"><div class="k">利用できる曜日</div><div class="v" style="font-size:16px">' . ($o['days'] ? h($o['days']) : '公表なし') . '</div>'
        . '<div class="s">訪問系・ケアマネに定員はありません</div></div>';
@@ -551,6 +581,7 @@ if (preg_match('#^office/(\d+)$#', $path, $m)) {
     if ($o['remarks']) { echo '<h3>備考</h3><p>' . h($o['remarks']) . '</p>'; }
     if ($o['url']) { echo '<p><a class="btn ghost" href="' . h($o['url']) . '" rel="nofollow noopener" target="_blank">事業所のサイトを開く</a></p>'; }
     echo '</div>';
+    op_box($o['name'], 'office', 'このページの内容は、事業所が都道府県等に報告し、厚生労働省の「介護サービス情報公表システム」で公表されているデータです。' . '内容を直すときは、公表システムでの報告内容を更新してください。当サイトは公表システムのオープンデータ（年2回）で更新します。' . '法人の事業所一覧を自社のサイトで出したい場合は、<a href="https://kappstore.exbridge.jp/app.php?id=57aebd041b7bab37&amp;ref=kkaigo-office" target="_blank" rel="noopener">このシステムのオンプレミス版</a>があります。');
     $near = nearby($db, (float)$o['lat'], (float)$o['lon'], 5, '', 12);
     echo '<h2>この事業所の近くにある事業所</h2>';
     $shown = 0;
@@ -661,6 +692,7 @@ if (preg_match('#^corp/(.+)$#', $path, $m)) {
     head_html($title . '｜' . $SITE, $desc, '/corp/' . rawurlencode($ckey), $ld);
 
     echo '<h1>' . h($corp) . '</h1>';
+    op_jump();
     echo '<p class="lead">' . h(tp_label($LATEST)) . '時点で公表されている、この法人の事業所です。</p>';
     echo '<div class="panel"><div class="grid">';
     echo '<div class="card"><div class="k">訪問介護</div><div class="v">' . n($gh) . '<span style="font-size:14px">か所</span></div>'
@@ -728,6 +760,7 @@ if (preg_match('#^corp/(.+)$#', $path, $m)) {
     echo '<p class="src">法人は法人番号ではなく正規化した法人名で束ねています。そのため<strong>同じ名前の別法人が混ざっていることがあります</strong>。'
        . '上の法人番号と所在地でご確認ください。</p>';
     echo '<p><a class="btn ghost" href="' . h($SELF . '/corps') . '">ほかの法人を見る</a></p>';
+    op_box($corp, 'corp', 'このページの内容は、事業所が都道府県等に報告し、厚生労働省の「介護サービス情報公表システム」で公表されているデータです。' . '内容を直すときは、公表システムでの報告内容を更新してください。当サイトは公表システムのオープンデータ（年2回）で更新します。' . '法人の事業所一覧を自社のサイトで出したい場合は、<a href="https://kappstore.exbridge.jp/app.php?id=57aebd041b7bab37&amp;ref=kkaigo-corp" target="_blank" rel="noopener">このシステムのオンプレミス版</a>があります。');
     foot_html();
     exit;
 }
