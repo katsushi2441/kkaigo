@@ -329,7 +329,7 @@ function op_box($name, $where, $src_html) {
         $subj = rawurlencode($name . 'の掲載・ITの相談');
         echo '<div class="grid" style="margin-top:6px">';
         echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">掲載・ITのご相談</div><div class="s" style="margin:4px 0 10px">このページの内容についてのご質問や、事業所の記録・請求・連絡の手間をシステムで減らしたいご相談を受け付けます（株式会社エクスブリッジ）。</div>'
-           . '<a class="btn" rel="nofollow" href="https://exbridge.jp/contact.php?subject=' . $subj . '&amp;ref=' . h($r) . '-contact#form">相談する（無料）</a></div>';
+           . '<a class="btn" rel="nofollow" href="https://exbridge.jp/contact.php?subject=' . $subj . '&amp;ref=' . h($r) . '-contact#form">相談する</a></div>';
         echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">AI-IT顧問契約</div><div class="s" style="margin:4px 0 10px">月15時間・税別15万円で、事業所の情報システム担当を引き受けます。介護・福祉の記録や事務の自動化も、この時間の中で作ります。名古屋市内の法人が対象です。</div>'
            . '<a class="btn" href="https://exbridge.jp/ai-it-komon.html?ref=' . h($r) . '-komon">AI-IT顧問契約を見る</a></div>';
         echo '<div class="card"><div style="font-size:16px;font-weight:800;color:var(--ink)">販売代理店募集</div><div class="s" style="margin:4px 0 10px">取引先や同業の事業所に、当社のAI・業務システムを紹介するだけで報酬が出ます（最大30%）。営業や導入の作業は当社が行います。</div>'
